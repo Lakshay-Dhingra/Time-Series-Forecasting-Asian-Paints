@@ -1,0 +1,584 @@
+---
+title: "Time Series Forecasting Asian Paints"
+author: "Lakshay Dhingra"
+output: html_notebook
+---
+
+## Time-Series Forecasting of Asian Paints Stock Prices
+
+### 1. Initial Setup
+
+#### 1.1. Clearing Previously Loaded Objects from Memory
+
+First, I wanted a clean slate to start running our code, and that is why I removed all currently loaded objects from R environment.\
+ls() function gives a list of current objects loaded in r environment, and rm() function removes given object from memory.
+
+```{r}
+rm(list=ls())
+```
+
+#### 1.2. Installing and Loading Packages
+
+Now, we are installing and loading all the required packages to do our analysis, plotting graphs, and creating models.\
+"install.packages()" installs all the packages required, and then lapply() function loads them one by one.
+
+```{r}
+# Required Packages
+packages = c('quantmod','tseries', 'forecast','FinTS', 'rugarch', 'dplyr', 'ggplot2', 'zoo', 'lmtest', 'knitr', 'kableExtra')
+
+# Installing the Required Packages
+install.packages(packages, dependencies = TRUE)
+
+# Loading the Required Packages
+lapply(packages, require, character.only = TRUE)
+```
+
+### 2. Data Preparation
+
+#### 2.1. Fetching Asian Paints Daily Stock Price Data of Last 10 Years
+
+I've chosen Asian Paints Daily Stock Price Data to do my time-series analysis. I went to yahoo finance and checked the symbols for the Asian Paints stock listed on the National Stock Exchange.\
+Using the symbol of Asian Paints in getSymbols() function, I fetched the daily stock data for past 10 years, and stored its daily adjusted closing price in an xts time series variable named **"ap_price_xts".**
+
+```{r}
+getSymbols(Symbols = 'ASIANPAINT.NS', 
+           src = 'yahoo', 
+           from = as.Date('2014-01-01'), 
+           to = as.Date('2023-12-31'),
+           periodicity = 'daily')
+
+ap_price_xts = na.omit(ASIANPAINT.NS$ASIANPAINT.NS.Adjusted)
+```
+
+#### 2.2. Retrieving and Cleaning the Daily Adjusted Closing Price
+
+I also created a simple data frame object of daily adjusted closing prices of the stock named **"ap_price"**, for plotting graphs and doing any further analysis.
+
+```{r}
+#Adjusted Closing Price
+ap_price = na.omit(subset(data.frame(date=index(ASIANPAINT.NS), coredata(ASIANPAINT.NS)), select = c(date, ASIANPAINT.NS.Adjusted)))
+#class(ap_price)
+```
+
+### 3. Data Exploration
+
+#### 3.1. Exploring Daily Closing Price of Asian Paints
+
+To explore the data, I plotted a graph of adjusted closing stock prices using the plot() function.
+
+```{r}
+# Plot the line graph
+plot(ap_price$date, ap_price$ASIANPAINT.NS.Adjusted,
+     type = "l", col = "darkblue", lwd = 1.5,
+     main = "Daily Adjusted Closing Price of Asian Paints",
+     xlab = "Date", ylab = "Adjusted Closing Price")
+```
+
+**Inference:** It seems from the first look that it has some trend, seasonality, and randomness. Also, the variances doesn't seem constant or similar overtime, which indicates heteroscedasticity.
+
+#### 3.2. Exploring **Monthly Average for Every Year**
+
+To delve deeper into my first look speculations, I also plotted a graph of monthly average of adjusted closing stock prices using the plot() function.
+
+```{r}
+# Extract month and year from the date
+ap_price$month_year <- format(ap_price$date, "%Y-%m")
+
+# Aggregate by month and calculate the mean
+monthly_avg <- ap_price %>%
+  group_by(month_year) %>%
+  summarise(avg_adjusted = mean(ASIANPAINT.NS.Adjusted))
+
+# Converting Month to Date Format
+monthly_avg$month_year <- as.Date(paste0(monthly_avg$month_year, "-01"))
+
+# Plot the line graph
+plot(monthly_avg$month_year, monthly_avg$avg_adjusted,
+     type = "l", col = "darkred", lwd = 2,
+     main = "Monthly Average Adjusted Closing Price of Asian Paints",
+     xlab = "Date", ylab = "Adjusted Closing Price")
+```
+
+**Inference:** This plot is somewhat similar to that of daily closing price, and also suggests that there is some trend, seasonality, randomness, and heteroscedasticity in data.
+
+#### 3.3. Matrix of Average Stock Price in Each Month and Year
+
+I tried to explore the long-term trend of data by forming a 2-dimensional matrix of stock prices named **"ap_matrix"**, with years and months as the 2 axes respectively.
+
+```{r}
+# Extract year and month from the date
+ap_price$year <- format(ap_price$date, "%Y")
+ap_price$month <- format(ap_price$date, "%b")
+
+# Create an empty list to store the average values
+monthly_averages <- list()
+
+# Calculate the average values for each month and year
+for (year in unique(ap_price$year)) {
+  for (month in unique(ap_price$month)) {
+    monthly_data <- ap_price[ap_price$year == year & ap_price$month == month, "ASIANPAINT.NS.Adjusted"]
+    monthly_averages[[paste0(year, "-", month)]] <- mean(monthly_data, na.rm = TRUE)
+  }
+}
+
+# Convert the list to a matrix
+ap_matrix <- matrix(unlist(monthly_averages),
+                    nrow = length(unique(ap_price$year)),
+                    ncol = 12, byrow = TRUE)
+
+start_year <- min(as.numeric(unique(ap_price$year)))
+
+# Defining the row_names or index as year of the stock price
+rownames(ap_matrix) <- seq(start_year, length.out = nrow(ap_matrix))
+
+colnames(ap_matrix) <- substr(month.abb, 1, 3)
+
+rounded_table <- kable(round(ap_matrix, 1), caption = "Monthly Average of Closing Prices of Asian Paints", "html") %>%
+                 kable_styling(full_width = FALSE, 
+                               bootstrap_options =
+                               c("striped","hover", "condensed")) %>%
+                 row_spec(0, bold = TRUE,
+                          background = "darkred",
+                          color = "white") %>%
+                 column_spec(1, bold = TRUE, border_right = TRUE)
+rounded_table
+```
+
+#### 3.4. Aggregate Month-wise Average Stock Price
+
+I also wanted to explore month-wise trend or cyclicity regardless of the year, so I combined data of all the years using colMeans() function.\
+Then, I plotted a scatter plot of average monthly closing price, and a smooth trend line using loess() function. LOESS stands for Locally Estimated Scatter plot Smoothing, a non-parametric local regression technique to fit a smooth curve through a scatter plot data.
+
+```{r}
+#Calculate the monthly averages
+monthly_averages <- colMeans(ap_matrix)
+
+# Plotting the scatter graph
+plot(monthly_averages,
+     type = "n",
+     xlab = "",
+     ylab = "Average Stock Price", 
+     main = "Monthly Average Stock Price",
+     ylim = range(monthly_averages),
+     xaxt = "n")
+axis(side = 1, at = 1:12, labels = colnames(ap_matrix))
+points(monthly_averages, pch = 16, col = "darkred")
+
+# Plot the LOESS line as a dashed line
+loess_fit <- loess(monthly_averages ~ seq_along(monthly_averages))
+smoothed_values <- predict(loess_fit, newdata = data.frame(x = seq_along(monthly_averages)))
+lines(seq_along(monthly_averages), smoothed_values, type = "l", col = "darkred", lty = 2)
+
+# Add gridlines
+grid()
+```
+
+**Inference:** During the second half of the year, Asian Paints' stock on average, experiences a higher closing price. Also, there seems a month-wise cyclicity in the closing stock prices.
+
+### 4. Checking Stationarity in Daily Closing Price of Stock
+
+#### 4.1. What is Stationarity?
+
+Stationarity refers to a property of data where statistical properties such as mean, variance, and autocorrelation structure remain constant over time. In simpler terms, it means that the data does not exhibit trends, seasonality, or other systematic patterns that change over time.
+
+#### 4.2. Augmented Dickey-Fuller (ADF) Test
+
+Now, I'll perform ADF test to check whether the data is stationary or not.
+
+Null Hypothesis - H0: Data is not stationary.\
+Alternate Hypothesis - H1: Data is stationary.
+
+```{r}
+# Perform the Augmented Dickey-Fuller (ADF) test
+adf_result <- adf.test(ap_price_xts)
+
+# Print the ADF test results
+print(adf_result)
+```
+
+As p = 0.3289 i.e. p \> 5%\
+So, Null Hypothesis can't be Rejected.
+
+**Inference:** Time series of closing price of Asian Paints can be Non-Stationary, i.e. it may have some trend or seasonality.
+
+#### 4.3. Visualizing Trend in Stock Price of Asian Paints
+
+Then to confirm the null hypothesis, I tried to plot the trend component in the daily closing price using decompose() and plot() function.
+
+```{r}
+# Assuming daily frequency
+ts_data <- ts(ap_price$ASIANPAINT.NS.Adjusted, frequency = 247)
+decomposed <- decompose(ts_data, type = "multiplicative")
+
+# Extract trend component
+trend_component <- decompose(ts_data, type = "multiplicative")$trend
+
+# Plot the trend component
+plot(ap_price$date,
+     trend_component,
+     type = "l",
+     lwd = 2,
+     col = "darkgreen", 
+     main = "Trend in Asian Paints Stock Price", xlab = "Date", ylab = "Trend")
+```
+
+**Inference:** Time series of daily closing price seems to have an upward trend over the years, and confirms that the data is non-stationary.
+
+### 5. Checking Stationarity in Daily Logarithmic Returns of Stock
+
+#### 5.1. Exploring Daily Logarithmic Returns of Asian Paints
+
+As the closing price does not have stationarity, I tried to explore the first order difference, i.e. the logarithm of difference of daily closing prices.
+
+```{r}
+ap_log_returns = na.omit(diff(log(ap_price_xts)))
+#View(ap_ds)
+plot(index(ap_log_returns), ap_log_returns,
+     type = "l",
+     lwd = 1,
+     main = "Daily Logarithmic Returns of Asian Paints",
+     xlab = "Year", ylab = "")
+```
+
+**Inference:** The trend in data is no longer visible, and it seems that data might have become stationary.
+
+#### 5.2. Augmented Dickey-Fuller (ADF) Test
+
+Now, lets check whether the daily log returns passes the stationarity test or not.
+
+```{r}
+# Perform the Augmented Dickey-Fuller (ADF) test
+adf_result_2 <- adf.test(ap_log_returns)
+
+# Print the ADF test results
+print(adf_result_2)
+```
+
+As p = 0.01 i.e. p \< 5%\
+Null Hypothesis is Rejected.
+
+**Inference:** Daily Logarithmic Returns of Asian Paints are Stationary.
+
+### 6. Checking for Autocorrelation
+
+#### **6.1. What is Auto-correlation?**
+
+Autocorrelation, also known as serial correlation, is a statistical phenomenon that measures the degree of linear relationship between consecutive observations in a time series data. Specifically, autocorrelation measures the correlation between an observation and its past observations at various lags (time intervals).
+
+#### **6.2. Ljung-Box or Box-Pierce Test**
+
+Now, we've established stationarity, let's check for Autocorrelation in daily log returns using the box test.
+
+Null Hypothesis - H0: No Autocorrelation\
+Alternate Hypothesis - H1: Has Autocorrelation
+
+```{r}
+lb_result = Box.test(ap_log_returns)
+print(lb_result)
+```
+
+As p = 0.0967 i.e. p \> 5%\
+So, Null Hypothesis can't be Rejected.
+
+**Inference:** We are safe to assume that there is no significant autocorrelation in log returns of Asian Paints.
+
+### 7. ARIMA Modelling for Autocorrelation
+
+#### 7.1. What is ARIMA?
+
+An Auto-Regressive Integrated Moving Average, or ARIMA, is a statistical analysis model that uses time series data to better understand the data and to predict future trends. It has following 3 components:
+
+-   **Autoregression (AR):** It refers to a model that shows a changing variable that regresses on its own lagged, or prior, values.
+
+-   **Integrated (I):** represents the differencing of raw observations to allow the time series to become stationary (i.e., data values are replaced by the difference between the data values and the previous values).
+
+-   **Moving average (MA):** incorporates the dependency between an observation and a residual error from a moving average model applied to lagged observations.
+
+#### 7.2. What is an Autocorrelation Function (ACF)?
+
+The Autocorrelation Function (ACF) is a statistical tool used to measure the correlation between observations in a time series at different time lags. It quantifies the relationship between an observation and its past observations.
+
+#### **7.3. Autocorrelation Function (ACF) of Daily Closing Prices**
+
+We tried to explore the plot of autocorrelation function for daily closing stock prices using acf() function.
+
+```{r}
+acf(ap_price_xts)
+```
+
+The ACF values for most lags are somewhere around 1 which is much higher than the significance level (blue horizontal line), suggesting significant auto-correlation at all lag values for daily closing price of Asian Paints. Also, there is a slow decay in acf, which also suggests non-stationarity.
+
+**Inference:** There can be autocorrelation in daily closing price of the stock. It also confirms our previous inference that the daily closing price of the stock is non-stationary.
+
+#### **7.4. Autocorrelation Function (ACF) Of Logarithm of Daily Return**
+
+Now, to develop an appropriate ARIMA model, I tried to explore the autocorrelation function for daily log return using acf() function.
+
+```{r}
+acf(ap_log_returns)
+```
+
+**Zero MA Order:** The small acf values for all other lags after lag=0 suggest that the auto-correlations beyond the lag=0 are not significant. This means we do not need any moving average component as values are not much dependent on its immediate previous values.
+
+**Zero Integrating/Differencing Order:** The log returns are stationary, as we've tested before, there is no differencing required.
+
+**Zero AR Order:** Since there are no significant autocorrelations at higher lags after 0, it suggests that there is no autocorrelation, which is also supported by our previous inference. Therefore, we need a zero AR order.
+
+**Inference:** This suggests an ARIMA Model with Potential Order (0,0,0).
+
+#### 7.4. What is a Partial Autocorrelation Function (PACF)?
+
+The Partial Autocorrelation Function (PACF) is a statistical tool used in time series analysis to measure the correlation between observations in a time series at different lags, while controlling for the intermediate lags. In other words, it quantifies the direct relationship between an observation and its past observations, excluding the indirect effects of the intermediate observations.
+
+#### 7.5. Partial Autocorrelation Function (PACF) of Logarithm of Daily Return
+
+I also ran pacf() function to look at the partial autocorrelations at different time lags.
+
+```{r}
+pacf(ap_log_returns)
+```
+
+Here, all PACF values are below the significance level and quite random which implies that there is no direct relationship between observations at any lag.
+
+**Inference:** This again confirms lack of autoregression or moving average terms.
+
+#### **7.6. ARIMA MODEL 1 - WITH ORDER(0,0,0) - My Suggested Model**
+
+Now, I'm creating an ARIMA Model manually using the arima() function with the order I feel fits the best by looking at the acf() and pacf() functions. I named this model as **"arima_model1"**.
+
+```{r}
+arima_model1 = arima(ap_log_returns, order = c(0,0,0))
+print(arima_model1)
+```
+
+#### **7.7. ARIMA MODEL 2 - WITH ORDER(1,0,0) - Generated by Auto ARIMA**
+
+I also ran auto.arima() function to have another model in case my model fails. This model came out to be of order (1,0,0) and I named it as **"arima_model2"**.
+
+```{r}
+arima_model2 = auto.arima(ap_log_returns)
+print(arima_model2)
+```
+
+#### **7.8. Comparing the Two ARIMA Models**
+
+Now, lets compare mean absolute errors of both the models and see which one is better.
+
+```{r}
+# ARIMA Model 1
+print(paste0("ARIMA Model 1 - ORDER(0,0,0)"))
+model1_mae = mean(abs(arima_model1$residuals))
+print(paste0("Mean Absolute Error: ",round(model1_mae,6)))
+
+cat("\n")
+
+# ARIMA Model 2
+print(paste0("ARIMA Model 2 - ORDER(1,0,0)"))
+model2_mae = mean(abs(arima_model2$residuals))
+print(paste0("Mean Absolute Error: ",round(model2_mae,6)))
+```
+
+**Inference:** Both models have nearly equal absolute error, with model 2 slightly having the edge.
+
+### 8. Exploring Logarithmic Daily Return of the Stock
+
+#### **8.1. Average Logarithmic Daily Return of Asian Paints**
+
+Now, that I'm working with Log of Daily Returns of a stock, and built ARIMA Models for it, its better to delve deeper and understand this data better. So first , let's look at the mean of our data.
+
+```{r}
+mean_ap_log_return = mean(ap_log_returns)
+print(paste0("Average Logarithmic Daily Return of Asian Paints:", round(mean_ap_log_return,6)))
+```
+
+#### **8.2. Plotting Variances of Log Return**
+
+Next up, let's look at how the data varies over time by plotting variances of the data from its mean.
+
+```{r}
+ap_log_returns_sq = (ap_log_returns-mean_ap_log_return)^2
+plot(index(ap_log_returns_sq), ap_log_returns_sq,
+     type = "l",
+     lwd = 1,
+     main = "Variances of Logarithmic Daily Return of Asian Paints",
+     xlab = "Year", ylab = "")
+```
+
+The data seems to have a good amount of variation in its deviation from mean, which indicates heteroscedasticity. Also, there is an extraordinarily high variation during 2020, possibly due to the panic in stock markets during the COVID-19 pandemic.
+
+**Inference:** The data might have heteroscedasticity.
+
+#### **8.3. Overall Variation in of Log Returns**
+
+Now, let's look at the variation in our data by calculating its variance, standard deviation, and coefficient of variation.
+
+```{r}
+ap_log_return_variance = mean(ap_log_returns_sq)
+print(paste0("Variance of Log Return of Asian Paints: ", round(ap_log_return_variance,6)))
+ap_log_return_sd = sqrt(ap_log_return_variance)
+print(paste0("Standard Deviation of Log Return of Asian Paints: ", round(ap_log_return_sd,6)))
+print(paste0("Coefficient of Variation of Log Return of Asian Paints: ", round(ap_log_return_sd/mean_ap_log_return,4)))
+```
+
+### 9. Checking for Heteroskedasticity for Log of Daily Returns
+
+#### 9.1. What is Heteroscedasticity?
+
+Heteroscedasticity is a situation where the variability of a variable (often the residuals or errors in a regression model) is not constant across all levels of another variable. In simpler terms, it means that the spread of the data points a.k.a. residuals changes as the value of another variable changes.
+
+#### **9.2. Box Test for Heteroscedasticity**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+print(Box.test(ap_log_returns_sq, lag = 10))
+```
+
+#### **9.3. ARCH LM Test for Heteroscedasticity**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+print(ArchTest(arima_model1$residuals, lags = 20))
+```
+
+As p = 2.2e-16 i.e. p \< 5%\
+Null Hypothesis is Rejected.
+
+**Inference:** Residuals of the log of daily returns have conditional heteroscedasticity.
+
+### 10. Checking for Heteroskedasticity for the ARIMA Models
+
+#### **10.1. Box Test for Heteroscedasticity - Model 1**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+print(Box.test((arima_model1$residuals)^2, lag = 10))
+```
+
+#### **10.2. ARCH LM Test for Heteroscedasticity - Model 1**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+print(ArchTest(arima_model1$residuals, lags = 20))
+```
+
+As p = 2.2e-16 i.e. p \< 5%\
+Null Hypothesis is Rejected.
+
+**Inference:** Residuals of ARIMA Model 1 also have conditional heteroscedasticity.
+
+#### **10.3. Box Test for Heteroscedasticity - Model 2**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+print(Box.test((arima_model2$residuals)^2, lag = 10))
+```
+
+#### **10.4. ARCH LM Test for Heteroscedasticity - Model 2**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+print(ArchTest(arima_model2$residuals, lags = 20))
+```
+
+As p = 2.2e-16 i.e. p \< 5%\
+Null Hypothesis is Rejected.
+
+**Inference:** Residuals of ARIMA Model 2 also have conditional heteroscedasticity.
+
+Now, as there's heteroscedasticity in all the cases above, and we have to remove heteroscedasticity in order to have an accurate and consistent forecast, now we'll try to capture the volatility using GARCH Models.
+
+### 11. Capturing Volatility with GARCH Models
+
+#### **11.1. What is GARCH Model?**
+
+The GARCH (Generalized Auto-Regressive Conditional Heteroscedasticity) model is a statistical model used to capture the time-varying volatility or variance clustering observed in financial time series data. It extends the ARCH model by incorporating not only past squared residuals but also past volatility values to model the conditional variance of the data.
+
+#### 11.2. Standard GARCH Model with Constant Mean and AR Order 0
+
+Now, by assuming GARCH order to be 1, and AR order 0 which we speculated earlier by looking at acf() and pacf() curves, we built a model named **"garch_model1"**.
+
+```{r}
+garch_model1 = ugarchspec(variance.model = list(model = 'sGARCH', garchOrder = c(1,1)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE))
+ap_log_returns_garch1 = ugarchfit(garch_model1, data = ap_log_returns_sq)
+print(ap_log_returns_garch1)
+```
+
+#### **11.3. Simple GARCH Model with Constant Mean and AR Order 1**
+
+Now, by assuming GARCH order to be 1, and AR order 1 which we received from auto arima, we built a model named **"garch_model2"**.
+
+```{r}
+garch_model2 = ugarchspec(variance.model = list(model = 'sGARCH', garchOrder = c(1,1)), mean.model = list(armaOrder = c(1,0), include.mean = TRUE))
+ap_log_returns_garch2 = ugarchfit(garch_model2, data = ap_log_returns_sq)
+print(ap_log_returns_garch2)
+```
+
+#### **11.4. ARCH LM Test for Heteroscedasticity - GARCH Model 1**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+# Perform ARCH LM test
+arch_test_model1 <- ArchTest(residuals(ap_log_returns_garch1), lags = 20)
+print(arch_test_model1)
+```
+
+As p = 0.1255 i.e. p \> 5%\
+Null Hypothesis cannot be Rejected.
+
+**Inference:** Residuals of GARCH Model 1 may not have conditional heteroscedasticity.
+
+#### **11.5. ARCH LM Test for Heteroscedasticity - GARCH Model 2**
+
+Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
+Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+
+```{r}
+# Perform ARCH LM test
+arch_test_model2 <- ArchTest(residuals(ap_log_returns_garch2), lags = 20)
+print(arch_test_model2)
+```
+
+As p = 5.6e-07 i.e. p \< 5%\
+Null Hypothesis is Rejected.
+
+**Inference:** Residuals of GARCH Model 2 have conditional heteroscedasticity.
+
+#### **11.6. Visualizing Residuals - GARCH Model 1**
+
+Though GARCH Model 1 passed the heteroscedasticity test, but let's visualize its residuals to probe further.
+
+```{r}
+garch_residuals_sq = (residuals(ap_log_returns_garch1))^2
+plot(index(garch_residuals_sq), garch_residuals_sq,
+     type = "l",
+     lwd = 1,
+     main = "Squared Residuals of GARCH Model 1",
+     xlab = "Year", ylab = "")
+```
+
+**Inference:** Except the outlier event of COVID-19, heteroscedasticity seems to be diminished.
+
+### 12. Using GARCH Model 1 for Forecasting
+
+```{r}
+garch_forecast = ugarchforecast(ap_log_returns_garch1, n.ahead = 100)
+garch_forecast
+```
+
+```{r}
+plot(garch_forecast)
+```
