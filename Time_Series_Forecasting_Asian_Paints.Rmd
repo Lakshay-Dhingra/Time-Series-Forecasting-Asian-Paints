@@ -1,10 +1,9 @@
 ---
 title: "Time Series Forecasting Asian Paints"
-author: "Lakshay Dhingra"
-output: html_notebook
+output:
+  html_notebook:
+    css: styles.css
 ---
-
-## Time-Series Forecasting of Asian Paints Stock Prices
 
 ### 1. Initial Setup
 
