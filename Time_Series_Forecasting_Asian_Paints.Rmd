@@ -561,15 +561,15 @@ Null Hypothesis is Rejected.
 Though GARCH Model 1 passed the heteroscedasticity test, but let's visualize its residuals to probe further.
 
 ```{r}
-garch_residuals_sq = (residuals(ap_log_returns_garch1))^2
-plot(index(garch_residuals_sq), garch_residuals_sq,
+garch_residuals = (residuals(ap_log_returns_garch1))
+plot(index(garch_residuals), garch_residuals,
      type = "l",
      lwd = 1,
-     main = "Squared Residuals of GARCH Model 1",
+     main = "Residuals of GARCH Model 1",
      xlab = "Year", ylab = "")
 ```
+**Inference:** Extraordinarily High Volatility in 2020 due to Covid-19 can be Observed.
 
-**Inference:** Except the outlier event of COVID-19, heteroscedasticity seems to be diminished.
 
 ### 12. Using GARCH Model 1 for Forecasting
 
