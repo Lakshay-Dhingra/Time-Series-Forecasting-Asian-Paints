@@ -26,7 +26,7 @@ Now, we are installing and loading all the required packages to do our analysis,
 packages = c('quantmod','tseries', 'forecast','FinTS', 'rugarch', 'dplyr', 'ggplot2', 'zoo', 'lmtest', 'knitr', 'kableExtra')
 
 # Installing the Required Packages
-install.packages(packages, dependencies = TRUE)
+# install.packages(packages, dependencies = TRUE)
 
 # Loading the Required Packages
 lapply(packages, require, character.only = TRUE)
@@ -37,16 +37,14 @@ lapply(packages, require, character.only = TRUE)
 #### 2.1. Fetching Asian Paints Daily Stock Price Data of Last 10 Years
 
 I've chosen Asian Paints Daily Stock Price Data to do my time-series analysis. I went to yahoo finance and checked the symbols for the Asian Paints stock listed on the National Stock Exchange.\
-Using the symbol of Asian Paints in getSymbols() function, I fetched the daily stock data for past 10 years, and stored its daily adjusted closing price in an xts time series variable named **"ap_price_xts".**
+Using the symbol of Asian Paints in getSymbols() function, I fetched the daily stock data for past 3 years. I've deliberately excluded the COVID-influenced time period i.e. between Indian FY-21 to FY-22 to prevent any misleading inferences out of the data.
 
 ```{r}
 getSymbols(Symbols = 'ASIANPAINT.NS', 
            src = 'yahoo', 
-           from = as.Date('2014-01-01'), 
-           to = as.Date('2023-12-31'),
+           from = as.Date('2022-04-01'), 
+           to = as.Date('2025-03-31'),
            periodicity = 'daily')
-
-ap_price_xts = na.omit(ASIANPAINT.NS$ASIANPAINT.NS.Adjusted)
 ```
 
 #### 2.2. Retrieving and Cleaning the Daily Adjusted Closing Price
@@ -56,7 +54,12 @@ I also created a simple data frame object of daily adjusted closing prices of th
 ```{r}
 #Adjusted Closing Price
 ap_price = na.omit(subset(data.frame(date=index(ASIANPAINT.NS), coredata(ASIANPAINT.NS)), select = c(date, ASIANPAINT.NS.Adjusted)))
-#class(ap_price)
+class(ap_price)
+```
+
+```{r}
+#getwd()
+write.csv(ap_price, file = "ap_price.csv", row.names = FALSE)
 ```
 
 ### 3. Data Exploration
@@ -66,14 +69,19 @@ ap_price = na.omit(subset(data.frame(date=index(ASIANPAINT.NS), coredata(ASIANPA
 To explore the data, I plotted a graph of adjusted closing stock prices using the plot() function.
 
 ```{r}
+
 # Plot the line graph
 plot(ap_price$date, ap_price$ASIANPAINT.NS.Adjusted,
      type = "l", col = "darkblue", lwd = 1.5,
      main = "Daily Adjusted Closing Price of Asian Paints",
-     xlab = "Date", ylab = "Adjusted Closing Price")
+     xlab = "Date", ylab = "Adjusted Closing Price",
+     xaxt = "n", cex.main = 1.4, cex.lab = 0.9, cex.axis = 0.9)
+
+# Add custom x-axis showing months
+axis.Date(1, at = seq(min(ap_price$date), max(ap_price$date), by = "months"), format = "%m-%Y")
 ```
 
-**Inference:** It seems from the first look that it has some trend, seasonality, and randomness. Also, the variances doesn't seem constant or similar overtime, which indicates heteroscedasticity.
+**Inference:** It seems from the first look that it has some trend, seasonality, and randomness.
 
 #### 3.2. Exploring **Monthly Average for Every Year**
 
@@ -98,81 +106,267 @@ plot(monthly_avg$month_year, monthly_avg$avg_adjusted,
      xlab = "Date", ylab = "Adjusted Closing Price")
 ```
 
-**Inference:** This plot is somewhat similar to that of daily closing price, and also suggests that there is some trend, seasonality, randomness, and heteroscedasticity in data.
+**Inference:** This plot is somewhat similar to that of daily closing price, and also suggests that there is definitely some seasonality in the data.
 
-#### 3.3. Matrix of Average Stock Price in Each Month and Year
+#### 3.3. Aggregate Month-wise Average Stock Price
 
-I tried to explore the long-term trend of data by forming a 2-dimensional matrix of stock prices named **"ap_matrix"**, with years and months as the 2 axes respectively.
+I also wanted to explore month-wise cyclicity regardless of the year, so I combined data of all the years and plotted a scatter plot of average monthly closing price.
 
 ```{r}
-# Extract year and month from the date
-ap_price$year <- format(ap_price$date, "%Y")
-ap_price$month <- format(ap_price$date, "%b")
+monthly_average <- ap_price %>%
+  mutate(month = format(date, "%m")) %>%  # Extract month as a two-digit number
+  group_by(month) %>%
+  summarize(monthly_avg = mean(ASIANPAINT.NS.Adjusted, na.rm = TRUE))
 
-# Create an empty list to store the average values
-monthly_averages <- list()
+# Convert month to numeric for plotting
+monthly_average$month_num <- as.numeric(monthly_average$month)
 
-# Calculate the average values for each month and year
-for (year in unique(ap_price$year)) {
-  for (month in unique(ap_price$month)) {
-    monthly_data <- ap_price[ap_price$year == year & ap_price$month == month, "ASIANPAINT.NS.Adjusted"]
-    monthly_averages[[paste0(year, "-", month)]] <- mean(monthly_data, na.rm = TRUE)
-  }
+# Plot the scatter plot
+plot(monthly_average$month_num, monthly_average$monthly_avg,
+     type = "p", pch = 19, col = "darkblue",
+     xaxt = "n", xlab = "Month (April to January)", ylab = "Monthly Average Price",
+     main = "Monthly Average Prices of Asian Paints")
+
+# Add x-axis labels for reordered months
+axis(1, at = 1:12, labels = levels(monthly_average$month))
+
+```
+
+#### 3.4. Month-wise Median and Variation in Stock Price
+
+I also plotted a box-plot see the month-wise median and distribution of data.
+
+```{r}
+
+# Add month as a factor with desired levels to the ap_price dataset
+ap_price <- ap_price %>%
+  mutate(month = format(date, "%m"))  # Extract month as two-digit number
+
+# Create the box plot
+boxplot(ASIANPAINT.NS.Adjusted ~ month, data = ap_price,
+        col = "lightblue", border = "darkblue",
+        xlab = "Month (April to January)", ylab = "Adjusted Closing Price",
+        main = "Monthly Price Distribution of Asian Paints",
+        xaxt = "n")
+
+# Add x-axis labels for reordered months
+axis(1, at = 1:12, labels = levels(ap_price$month))
+
+```
+
+**Inference:** During the 2nd quarter of the financial year (July-Sept), Asian Paints' stock on average, experiences a higher closing price. Also, there seems a month-wise cyclicity in the closing stock prices. Also, Dec-Mar seems to more volatile than rest of the year.
+
+#### 3.5. Finding the Sesonality Index in the Stock Prices - Central Moving Average Approach
+
+I've used 12 month moving average to de-seasonalise the data, and divided stock prices with this to find the seasonality factor.
+
+```{r}
+
+# Ensure data is sorted by month_year
+ap_price <- ap_price %>%
+  arrange(month_year)
+
+# Calculate monthly averages (if not already grouped by month)
+monthly_data <- ap_price %>%
+  group_by(month_year) %>%
+  summarize(monthly_avg = mean(ASIANPAINT.NS.Adjusted, na.rm = TRUE)) %>%
+  ungroup()
+
+# Calculate 12-month trailing and central moving averages
+monthly_data <- monthly_data %>%
+  mutate(
+    moving_avg_12 = rollmean(monthly_avg, k = 12, fill = NA, align = "center"),   # Trailing
+  )
+
+# Join the moving averages back to the original data
+ap_price <- ap_price %>%
+  left_join(monthly_data, by = "month_year")
+
+# View the resulting data frame
+head(ap_price)
+```
+
+```{r}
+
+# Step 1: Calculate seasonality factor
+monthly_data <- monthly_data %>%
+  mutate(seasonality_factor = monthly_avg / moving_avg_12)
+
+# Step 2: Extract month from month_year and calculate seasonality index
+seasonality_index <- monthly_data %>%
+  mutate(month = format(as.Date(paste0(month_year, "-01")), "%m")) %>%  # Extract month as "01", "02", etc.
+  group_by(month) %>%
+  summarize(seasonality_index = mean(seasonality_factor, na.rm = TRUE)) %>%
+  ungroup()
+
+# Step 3: Add seasonality index back to ap_price
+ap_price <- ap_price %>%
+  mutate(month = format(as.Date(paste0(month_year, "-01")), "%m")) %>%  # Extract month for matching
+  left_join(seasonality_index, by = "month")
+
+# View the resulting data frame
+head(ap_price)
+```
+
+```{r}
+# Calculate the sum of the seasonality_index column
+total_seasonality_index <- sum(seasonality_index$seasonality_index, na.rm = TRUE)
+
+# Print the result
+print(total_seasonality_index)
+```
+
+**Inference:** Sum of seasonality index is fairly close to 12, given we have used only a 3-year data on for this. Seems like we might have captured some seasonality.
+
+#### 3.6. Finding the Sesonality Index in the Stock Prices - Monthly Average Normalization Approach
+
+I've normalized monthly average that we used to before to simply calculate the seasonality index.
+
+```{r}
+
+# Calculate the average of monthly_avg
+avg_monthly_avg <- mean(monthly_average$monthly_avg, na.rm = TRUE)
+
+# Calculate seasonality_index_2 for each month
+monthly_average <- monthly_average %>%
+  mutate(seasonality_index_2 = monthly_avg / avg_monthly_avg)
+
+# Add seasonality_index_2 to ap_price based on the month
+ap_price <- ap_price %>%
+  mutate(month = format(date, "%m")) %>%  # Extract month as two-digit format
+  left_join(monthly_average %>% select(month, seasonality_index_2), by = "month")
+
+```
+
+#### 3.7. Deseasonalizing the Prices
+
+Using the seasonality indices we've just calculated, let's de-seasonalize our stock price data.
+
+```{r}
+
+# Ensure seasonality_index column is present and matches the structure of ap_price
+ap_price <- ap_price %>%
+  mutate(DS_Price = ASIANPAINT.NS.Adjusted / seasonality_index)
+
+# Remove the moving_avg_12 column
+ap_price <- ap_price %>%
+  select(-moving_avg_12)
+```
+
+```{r}
+
+# Ensure seasonality_index column is present and matches the structure of ap_price
+ap_price <- ap_price %>%
+  mutate(DS_Price_2 = ASIANPAINT.NS.Adjusted / seasonality_index_2)
+
+# View the updated dataset
+head(ap_price)
+```
+
+#### 3.8. Visualizing the de-seasonalized prices
+
+**Approach-1**
+
+```{r}
+
+# Plot the DS_Price column as a line plot
+plot(ap_price$date, ap_price$DS_Price,
+     type = "l", col = "darkgreen", lwd = 1.5,
+     main = "Deseasonalized Price of Asian Paints",
+     xlab = "Date", ylab = "Deseasonalized Price")
+```
+
+```{r}
+# Define a function to normalize dates by financial year
+normalize_fy_dates <- function(df, start_date) {
+  df %>%
+    mutate(day_of_fy = as.numeric(date - as.Date(start_date) + 1)) %>%
+    select(day_of_fy, DS_Price)
 }
 
-# Convert the list to a matrix
-ap_matrix <- matrix(unlist(monthly_averages),
-                    nrow = length(unique(ap_price$year)),
-                    ncol = 12, byrow = TRUE)
+# Normalize dates for each financial year
+ap_price_fy23 <- ap_price %>%
+  filter(date >= as.Date("2022-04-01") & date <= as.Date("2023-03-31")) %>%
+  normalize_fy_dates(start_date = "2022-04-01")
 
-start_year <- min(as.numeric(unique(ap_price$year)))
+ap_price_fy24 <- ap_price %>%
+  filter(date >= as.Date("2023-04-01") & date <= as.Date("2024-03-31")) %>%
+  normalize_fy_dates(start_date = "2023-04-01")
 
-# Defining the row_names or index as year of the stock price
-rownames(ap_matrix) <- seq(start_year, length.out = nrow(ap_matrix))
+ap_price_fy25 <- ap_price %>%
+  filter(date >= as.Date("2024-04-01") & date <= as.Date("2025-03-31")) %>%
+  normalize_fy_dates(start_date = "2024-04-01")
 
-colnames(ap_matrix) <- substr(month.abb, 1, 3)
+# Create the base plot for FY2023
+plot(ap_price_fy23$day_of_fy, ap_price_fy23$DS_Price,
+     type = "l", col = "blue", lwd = 1.5,
+     main = "Deseasonalized Price of Asian Paints (FY23, FY24, FY25)",
+     xlab = "Day of Financial Year", ylab = "Deseasonalized Price",
+     ylim = range(c(ap_price_fy23$DS_Price, ap_price_fy24$DS_Price, ap_price_fy25$DS_Price), na.rm = TRUE))
 
-rounded_table <- kable(round(ap_matrix, 1), caption = "Monthly Average of Closing Prices of Asian Paints", "html") %>%
-                 kable_styling(full_width = FALSE, 
-                               bootstrap_options =
-                               c("striped","hover", "condensed")) %>%
-                 row_spec(0, bold = TRUE,
-                          background = "darkred",
-                          color = "white") %>%
-                 column_spec(1, bold = TRUE, border_right = TRUE)
-rounded_table
+# Add lines for FY2024 and FY2025
+lines(ap_price_fy24$day_of_fy, ap_price_fy24$DS_Price, col = "red", lwd = 1.5)
+lines(ap_price_fy25$day_of_fy, ap_price_fy25$DS_Price, col = "darkgreen", lwd = 1.5)
+
+# Add a legend
+legend("topright", legend = c("FY2023", "FY2024", "FY2025"),
+       col = c("blue", "red", "darkgreen"), lty = 1, lwd = 1.5)
+
 ```
 
-#### 3.4. Aggregate Month-wise Average Stock Price
-
-I also wanted to explore month-wise trend or cyclicity regardless of the year, so I combined data of all the years using colMeans() function.\
-Then, I plotted a scatter plot of average monthly closing price, and a smooth trend line using loess() function. LOESS stands for Locally Estimated Scatter plot Smoothing, a non-parametric local regression technique to fit a smooth curve through a scatter plot data.
+**Approach-2**
 
 ```{r}
-#Calculate the monthly averages
-monthly_averages <- colMeans(ap_matrix)
 
-# Plotting the scatter graph
-plot(monthly_averages,
-     type = "n",
-     xlab = "",
-     ylab = "Average Stock Price", 
-     main = "Monthly Average Stock Price",
-     ylim = range(monthly_averages),
-     xaxt = "n")
-axis(side = 1, at = 1:12, labels = colnames(ap_matrix))
-points(monthly_averages, pch = 16, col = "darkred")
-
-# Plot the LOESS line as a dashed line
-loess_fit <- loess(monthly_averages ~ seq_along(monthly_averages))
-smoothed_values <- predict(loess_fit, newdata = data.frame(x = seq_along(monthly_averages)))
-lines(seq_along(monthly_averages), smoothed_values, type = "l", col = "darkred", lty = 2)
-
-# Add gridlines
-grid()
+# Plot the DS_Price_2 column as a line plot
+plot(ap_price$date, ap_price$DS_Price_2,
+     type = "l", col = "darkgreen", lwd = 1.5,
+     main = "Deseasonalized Price of Asian Paints",
+     xlab = "Date", ylab = "Deseasonalized Price")
 ```
 
-**Inference:** During the second half of the year, Asian Paints' stock on average, experiences a higher closing price. Also, there seems a month-wise cyclicity in the closing stock prices.
+```{r}
+# Define a function to normalize dates by financial year
+normalize_fy_dates <- function(df, start_date) {
+  df %>%
+    mutate(day_of_fy = as.numeric(date - as.Date(start_date) + 1)) %>%
+    select(day_of_fy, DS_Price_2)
+}
+
+# Normalize dates for each financial year
+ap_price_fy23 <- ap_price %>%
+  filter(date >= as.Date("2022-04-01") & date <= as.Date("2023-03-31")) %>%
+  normalize_fy_dates(start_date = "2022-04-01")
+
+ap_price_fy24 <- ap_price %>%
+  filter(date >= as.Date("2023-04-01") & date <= as.Date("2024-03-31")) %>%
+  normalize_fy_dates(start_date = "2023-04-01")
+
+ap_price_fy25 <- ap_price %>%
+  filter(date >= as.Date("2024-04-01") & date <= as.Date("2025-03-31")) %>%
+  normalize_fy_dates(start_date = "2024-04-01")
+# Create the base plot for FY2023
+plot(ap_price_fy23$day_of_fy, ap_price_fy23$DS_Price_2,
+     type = "l", col = "blue", lwd = 1.5,
+     main = "Deseasonalized Price of Asian Paints (FY23, FY24, FY25)",
+     xlab = "Day of Financial Year", ylab = "Deseasonalized Price",
+     ylim = range(c(ap_price_fy23$DS_Price_2, ap_price_fy24$DS_Price_2, ap_price_fy25$DS_Price_2), na.rm = TRUE))
+
+# Add lines for FY2024 and FY2025
+lines(ap_price_fy24$day_of_fy, ap_price_fy24$DS_Price_2, col = "red", lwd = 1.5)
+lines(ap_price_fy25$day_of_fy, ap_price_fy25$DS_Price_2, col = "darkgreen", lwd = 1.5)
+
+# Add a legend
+legend("topright", legend = c("FY2023", "FY2024", "FY2025"),
+       col = c("blue", "red", "darkgreen"), lty = 1, lwd = 1.5)
+
+```
+
+**Inference:** It seems we have removed some seasonality but there are still massive and seemingly random fluctuations in data. I prefer using the second set of seasonality indices, which seems slightly more effective.
+
+```{r}
+ap_price_xts = na.omit(ap_price$DS_Price_2)
+```
 
 ### 4. Checking Stationarity in Daily Closing Price of Stock
 
@@ -195,33 +389,10 @@ adf_result <- adf.test(ap_price_xts)
 print(adf_result)
 ```
 
-As p = 0.3289 i.e. p \> 5%\
+As p \> 5%\
 So, Null Hypothesis can't be Rejected.
 
-**Inference:** Time series of closing price of Asian Paints can be Non-Stationary, i.e. it may have some trend or seasonality.
-
-#### 4.3. Visualizing Trend in Stock Price of Asian Paints
-
-Then to confirm the null hypothesis, I tried to plot the trend component in the daily closing price using decompose() and plot() function.
-
-```{r}
-# Assuming daily frequency
-ts_data <- ts(ap_price$ASIANPAINT.NS.Adjusted, frequency = 247)
-decomposed <- decompose(ts_data, type = "multiplicative")
-
-# Extract trend component
-trend_component <- decompose(ts_data, type = "multiplicative")$trend
-
-# Plot the trend component
-plot(ap_price$date,
-     trend_component,
-     type = "l",
-     lwd = 2,
-     col = "darkgreen", 
-     main = "Trend in Asian Paints Stock Price", xlab = "Date", ylab = "Trend")
-```
-
-**Inference:** Time series of daily closing price seems to have an upward trend over the years, and confirms that the data is non-stationary.
+**Inference:** Time series of de-seasonalised closing price of Asian paints is Non-Stationary, i.e. it may have some trend or seasonality.
 
 ### 5. Checking Stationarity in Daily Logarithmic Returns of Stock
 
@@ -253,7 +424,7 @@ adf_result_2 <- adf.test(ap_log_returns)
 print(adf_result_2)
 ```
 
-As p = 0.01 i.e. p \< 5%\
+As p \< 5%\
 Null Hypothesis is Rejected.
 
 **Inference:** Daily Logarithmic Returns of Asian Paints are Stationary.
@@ -272,14 +443,14 @@ Null Hypothesis - H0: No Autocorrelation\
 Alternate Hypothesis - H1: Has Autocorrelation
 
 ```{r}
-lb_result = Box.test(ap_log_returns)
+lb_result = Box.test(ap_log_returns, lag=10)
 print(lb_result)
 ```
 
-As p = 0.0967 i.e. p \> 5%\
+As p \> 5%\
 So, Null Hypothesis can't be Rejected.
 
-**Inference:** We are safe to assume that there is no significant autocorrelation in log returns of Asian Paints.
+**Inference:** We may assume that there is no significant autocorrelation in log returns of Asian Paints, but let's probe it further.
 
 ### 7. ARIMA Modelling for Autocorrelation
 
@@ -297,33 +468,13 @@ An Auto-Regressive Integrated Moving Average, or ARIMA, is a statistical analysi
 
 The Autocorrelation Function (ACF) is a statistical tool used to measure the correlation between observations in a time series at different time lags. It quantifies the relationship between an observation and its past observations.
 
-#### **7.3. Autocorrelation Function (ACF) of Daily Closing Prices**
-
-We tried to explore the plot of autocorrelation function for daily closing stock prices using acf() function.
-
-```{r}
-acf(ap_price_xts)
-```
-
-The ACF values for most lags are somewhere around 1 which is much higher than the significance level (blue horizontal line), suggesting significant auto-correlation at all lag values for daily closing price of Asian Paints. Also, there is a slow decay in acf, which also suggests non-stationarity.
-
-**Inference:** There can be autocorrelation in daily closing price of the stock. It also confirms our previous inference that the daily closing price of the stock is non-stationary.
-
-#### **7.4. Autocorrelation Function (ACF) Of Logarithm of Daily Return**
+#### **7.3. Autocorrelation Function (ACF) Of Logarithm of Daily Return**
 
 Now, to develop an appropriate ARIMA model, I tried to explore the autocorrelation function for daily log return using acf() function.
 
 ```{r}
 acf(ap_log_returns)
 ```
-
-**Zero MA Order:** The small acf values for all other lags after lag=0 suggest that the auto-correlations beyond the lag=0 are not significant. This means we do not need any moving average component as values are not much dependent on its immediate previous values.
-
-**Zero Integrating/Differencing Order:** The log returns are stationary, as we've tested before, there is no differencing required.
-
-**Zero AR Order:** Since there are no significant autocorrelations at higher lags after 0, it suggests that there is no autocorrelation, which is also supported by our previous inference. Therefore, we need a zero AR order.
-
-**Inference:** This suggests an ARIMA Model with Potential Order (0,0,0).
 
 #### 7.4. What is a Partial Autocorrelation Function (PACF)?
 
@@ -337,47 +488,157 @@ I also ran pacf() function to look at the partial autocorrelations at different 
 pacf(ap_log_returns)
 ```
 
-Here, all PACF values are below the significance level and quite random which implies that there is no direct relationship between observations at any lag.
+**Inference:** It indicates some correlations at lag=25, might be because a typical month at stock market is also of nearly 25 days. Let's try a model with AR=6, MA=3, based on spikes on the curves.
 
-**Inference:** This again confirms lack of autoregression or moving average terms.
-
-#### **7.6. ARIMA MODEL 1 - WITH ORDER(0,0,0) - My Suggested Model**
+#### **7.6. ARIMA MODEL 1 - WITH ORDER(6,0,3) - My Suggested Model**
 
 Now, I'm creating an ARIMA Model manually using the arima() function with the order I feel fits the best by looking at the acf() and pacf() functions. I named this model as **"arima_model1"**.
 
 ```{r}
-arima_model1 = arima(ap_log_returns, order = c(0,0,0))
-print(arima_model1)
+arima_model1 = arima(ap_log_returns, order = c(6,0,3))
+
+# 1. Calculate Residuals
+arima1_residuals <- residuals(arima_model1)
+
+# 2. Compute Metrics
+
+# Root Mean Squared Error (RMSE)
+rmse1 <- sqrt(mean(arima1_residuals^2))
+
+# Mean Absolute Percentage Error (MAPE)
+mape1 <- mean(abs(arima1_residuals / ap_log_returns), na.rm = TRUE) * 100
+
+# Adjusted R-Squared
+# Total sum of squares
+sst <- sum((ap_log_returns - mean(ap_log_returns, na.rm = TRUE))^2, na.rm = TRUE)
+# Residual sum of squares
+ssr <- sum(arima1_residuals^2, na.rm = TRUE)
+# Adjusted R-Squared formula
+n <- length(ap_log_returns)  # Number of observations
+p <- length(coef(arima_model1))  # Number of parameters
+adjusted_r_squared_1 <- 1 - ((1 - (1 - (ssr / sst))) * ((n - 1) / (n - p - 1)))
+
+# 3. Print Results
+cat("Metrics for ARIMA Model:\n")
+cat(sprintf("RMSE: %.4f\n", rmse1))
+cat(sprintf("MAPE: %.2f%%\n", mape1))
+cat(sprintf("Log-Likelihood: %.4f\n", logLik(arima_model1)))
+cat(sprintf("AIC: %.4f\n", AIC(arima_model1)))
+cat(sprintf("BIC: %.4f\n", BIC(arima_model1)))
+cat(sprintf("Adjusted R-Squared: %.4f\n", adjusted_r_squared_1))
 ```
 
-#### **7.7. ARIMA MODEL 2 - WITH ORDER(1,0,0) - Generated by Auto ARIMA**
+#### **7.7. ARIMA MODEL 2 - WITH ORDER(0,0,0) - Generated by Auto ARIMA**
 
-I also ran auto.arima() function to have another model in case my model fails. This model came out to be of order (1,0,0) and I named it as **"arima_model2"**.
+I also ran auto.arima() function to have another model in case my model fails. This model came out to be of order (0,0,0) i.e. the original values and I named it as **"arima_model2"**.
 
 ```{r}
 arima_model2 = auto.arima(ap_log_returns)
-print(arima_model2)
+
+# 1. Calculate Residuals
+arima2_residuals <- residuals(arima_model2)
+
+# 2. Compute Metrics
+
+# Root Mean Squared Error (RMSE)
+rmse2 <- sqrt(mean(arima2_residuals^2))
+
+# Mean Absolute Percentage Error (MAPE)
+mape2 <- mean(abs(arima2_residuals / ap_log_returns), na.rm = TRUE) * 100
+
+# Adjusted R-Squared
+# Total sum of squares
+sst <- sum((ap_log_returns - mean(ap_log_returns, na.rm = TRUE))^2, na.rm = TRUE)
+# Residual sum of squares
+ssr <- sum(arima2_residuals^2, na.rm = TRUE)
+# Adjusted R-Squared formula
+n <- length(ap_log_returns)  # Number of observations
+p <- length(coef(arima_model2))  # Number of parameters
+adjusted_r_squared_2 <- 1 - ((1 - (1 - (ssr / sst))) * ((n - 1) / (n - p - 1)))
+
+# 3. Print Results
+cat("Metrics for ARIMA Model:\n")
+cat(sprintf("RMSE: %.4f\n", rmse2))
+cat(sprintf("MAPE: %.2f%%\n", mape2))
+cat(sprintf("Log-Likelihood: %.4f\n", logLik(arima_model2)))
+cat(sprintf("AIC: %.4f\n", AIC(arima_model2)))
+cat(sprintf("BIC: %.4f\n", BIC(arima_model2)))
+cat(sprintf("Adjusted R-Squared: %.4f\n", adjusted_r_squared_2))
 ```
 
-#### **7.8. Comparing the Two ARIMA Models**
-
-Now, lets compare mean absolute errors of both the models and see which one is better.
+#### **7.8. ARIMA MODEL 3 - WITH ORDER(1,0,0) - Another Suggested Model**
 
 ```{r}
-# ARIMA Model 1
-print(paste0("ARIMA Model 1 - ORDER(0,0,0)"))
-model1_mae = mean(abs(arima_model1$residuals))
-print(paste0("Mean Absolute Error: ",round(model1_mae,6)))
+arima_model3 = arima(ap_log_returns, order = c(1,0,0))
 
-cat("\n")
+# 1. Calculate Residuals
+arima3_residuals <- residuals(arima_model3)
 
-# ARIMA Model 2
-print(paste0("ARIMA Model 2 - ORDER(1,0,0)"))
-model2_mae = mean(abs(arima_model2$residuals))
-print(paste0("Mean Absolute Error: ",round(model2_mae,6)))
+# 2. Compute Metrics
+
+# Root Mean Squared Error (RMSE)
+rmse3 <- sqrt(mean(arima3_residuals^2))
+
+# Mean Absolute Percentage Error (MAPE)
+mape3 <- mean(abs(arima3_residuals / ap_log_returns), na.rm = TRUE) * 100
+
+# Adjusted R-Squared
+# Total sum of squares
+sst <- sum((ap_log_returns - mean(ap_log_returns, na.rm = TRUE))^2, na.rm = TRUE)
+# Residual sum of squares
+ssr <- sum(arima3_residuals^2, na.rm = TRUE)
+# Adjusted R-Squared formula
+n <- length(ap_log_returns)  # Number of observations
+p <- length(coef(arima_model3))  # Number of parameters
+adjusted_r_squared_3 <- 1 - ((1 - (1 - (ssr / sst))) * ((n - 1) / (n - p - 1)))
+
+# 3. Print Results
+cat("Metrics for ARIMA Model:\n")
+cat(sprintf("RMSE: %.4f\n", rmse3))
+cat(sprintf("MAPE: %.2f%%\n", mape3))
+cat(sprintf("Log-Likelihood: %.4f\n", logLik(arima_model3)))
+cat(sprintf("AIC: %.4f\n", AIC(arima_model3)))
+cat(sprintf("BIC: %.4f\n", BIC(arima_model3)))
+cat(sprintf("Adjusted R-Squared: %.4f\n", adjusted_r_squared_3))
 ```
 
-**Inference:** Both models have nearly equal absolute error, with model 2 slightly having the edge.
+#### **7.9. ARIMA MODEL 4 - WITH ORDER(0,0,1) - Another Suggested Model**
+
+```{r}
+arima_model4 = arima(ap_log_returns, order = c(0,0,1))
+
+# 1. Calculate Residuals
+arima4_residuals <- residuals(arima_model4)
+
+# 2. Compute Metrics
+
+# Root Mean Squared Error (RMSE)
+rmse4 <- sqrt(mean(arima4_residuals^2))
+
+# Mean Absolute Percentage Error (MAPE)
+mape4 <- mean(abs(arima4_residuals / ap_log_returns), na.rm = TRUE) * 100
+
+# Adjusted R-Squared
+# Total sum of squares
+sst <- sum((ap_log_returns - mean(ap_log_returns, na.rm = TRUE))^2, na.rm = TRUE)
+# Residual sum of squares
+ssr <- sum(arima4_residuals^2, na.rm = TRUE)
+# Adjusted R-Squared formula
+n <- length(ap_log_returns)  # Number of observations
+p <- length(coef(arima_model4))  # Number of parameters
+adjusted_r_squared_4 <- 1 - ((1 - (1 - (ssr / sst))) * ((n - 1) / (n - p - 1)))
+
+# 3. Print Results
+cat("Metrics for ARIMA Model:\n")
+cat(sprintf("RMSE: %.4f\n", rmse4))
+cat(sprintf("MAPE: %.2f%%\n", mape4))
+cat(sprintf("Log-Likelihood: %.4f\n", logLik(arima_model4)))
+cat(sprintf("AIC: %.4f\n", AIC(arima_model4)))
+cat(sprintf("BIC: %.4f\n", BIC(arima_model4)))
+cat(sprintf("Adjusted R-Squared: %.4f\n", adjusted_r_squared_4))
+```
+
+**Inference:** All the models are quite unfit, also ljung-box test suggests no significant correlation, so its better not to use any ARIMA model.
 
 ### 8. Exploring Logarithmic Daily Return of the Stock
 
@@ -403,7 +664,18 @@ plot(index(ap_log_returns_sq), ap_log_returns_sq,
      xlab = "Year", ylab = "")
 ```
 
-The data seems to have a good amount of variation in its deviation from mean, which indicates heteroscedasticity. Also, there is an extraordinarily high variation during 2020, possibly due to the panic in stock markets during the COVID-19 pandemic.
+#### **8.3. Plotting Residuals of Log Return**
+
+```{r}
+mean_model_residuals = (ap_log_returns-mean_ap_log_return)
+plot(index(mean_model_residuals), ap_log_returns_sq,
+     type = "l",
+     lwd = 1,
+     main = "Residuals of Logarithmic Daily Return of Asian Paints",
+     xlab = "Year", ylab = "")
+```
+
+The data seems to have a good amount of variation in its deviation from mean, also volatility seems to cluster, which indicates heteroscedasticity.
 
 **Inference:** The data might have heteroscedasticity.
 
@@ -431,7 +703,19 @@ Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
 Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
 
 ```{r}
+print(Box.test(ap_log_returns_sq, lag = 1))
+```
+
+```{r}
+print(Box.test(ap_log_returns_sq, lag = 2))
+```
+
+```{r}
 print(Box.test(ap_log_returns_sq, lag = 10))
+```
+
+```{r}
+print(Box.test(ap_log_returns_sq, lag = 25))
 ```
 
 #### **9.3. ARCH LM Test for Heteroscedasticity**
@@ -440,63 +724,27 @@ Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
 Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
 
 ```{r}
-print(ArchTest(arima_model1$residuals, lags = 20))
+print(ArchTest(arima_model2$residuals, lags = 1))
 ```
-
-As p = 2.2e-16 i.e. p \< 5%\
-Null Hypothesis is Rejected.
-
-**Inference:** Residuals of the log of daily returns have conditional heteroscedasticity.
-
-### 10. Checking for Heteroskedasticity for the ARIMA Models
-
-#### **10.1. Box Test for Heteroscedasticity - Model 1**
-
-Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
-Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
 
 ```{r}
-print(Box.test((arima_model1$residuals)^2, lag = 10))
+print(ArchTest(arima_model2$residuals, lags = 2))
 ```
-
-#### **10.2. ARCH LM Test for Heteroscedasticity - Model 1**
-
-Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
-Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
 
 ```{r}
-print(ArchTest(arima_model1$residuals, lags = 20))
+print(ArchTest(arima_model2$residuals, lags = 10))
 ```
-
-As p = 2.2e-16 i.e. p \< 5%\
-Null Hypothesis is Rejected.
-
-**Inference:** Residuals of ARIMA Model 1 also have conditional heteroscedasticity.
-
-#### **10.3. Box Test for Heteroscedasticity - Model 2**
-
-Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
-Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
 
 ```{r}
-print(Box.test((arima_model2$residuals)^2, lag = 10))
+print(ArchTest(arima_model2$residuals, lags = 25))
 ```
 
-#### **10.4. ARCH LM Test for Heteroscedasticity - Model 2**
+As p \> 5%\
+Null Hypothesis can't be Rejected.
 
-Null Hypothesis - H0: There is No Heteroscedasticity in the residuals\
-Alternate Hypothesis - H1: There is Heteroscedasticity in the residuals
+**Inference:** We're safe to assume that there is no significant heteroscedasticity in the series based on these tests. But let's try to model it if we can get a better model.
 
-```{r}
-print(ArchTest(arima_model2$residuals, lags = 20))
-```
-
-As p = 2.2e-16 i.e. p \< 5%\
-Null Hypothesis is Rejected.
-
-**Inference:** Residuals of ARIMA Model 2 also have conditional heteroscedasticity.
-
-Now, as there's heteroscedasticity in all the cases above, and we have to remove heteroscedasticity in order to have an accurate and consistent forecast, now we'll try to capture the volatility using GARCH Models.
+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-- GARCH Model Needs to be Updated -------------------------------------
 
 ### 11. Capturing Volatility with GARCH Models
 
@@ -568,8 +816,8 @@ plot(index(garch_residuals), garch_residuals,
      main = "Residuals of GARCH Model 1",
      xlab = "Year", ylab = "")
 ```
-**Inference:** Extraordinarily High Volatility in 2020 due to Covid-19 can be Observed.
 
+**Inference:** Extraordinarily High Volatility in 2020 due to Covid-19 can be Observed.
 
 ### 12. Using GARCH Model 1 for Forecasting
 
